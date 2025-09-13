@@ -1,5 +1,6 @@
 #define _DEFAULT_SOURCE
 
+#include <arpa/inet.h>
 #include <assert.h>
 #include <ctype.h>
 #include <dirent.h>
@@ -8,9 +9,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+/*
+ * The following function convert:
+ * from little endian hex form -> 3600007F
+ * to standard text presentation -> 127.0.0.54
+ */
+void address_converter(char *lehf, char *stp) {
+  // this si working for ipv4 addresses
+  int i;
+  char buf[3];
+  for (i = 6; i >= 0; i = i - 2) {
+    char octet[3];
+    memcpy(octet, &lehf[i], 2);
+    octet[2] = '\0';
+    short a = strtol(octet, NULL, 16);
+    sprintf(buf, "%hu", a);
+    if (i < 6) {
+      strcat(stp, ".");
+    }
+    strcat(stp, buf);
+  }
+  strcat(stp, "\0");
+}
 
 int main(int argc, char *argv[]) {
   setbuf(stdout, NULL); // disable buffer on stdout
@@ -18,12 +43,7 @@ int main(int argc, char *argv[]) {
   FILE *fd;
   int i = 0;
 
-  enum connection_type {
-    TCP,
-    TCP6,
-    UDP,
-    UDP6
-  };
+  enum connection_type { TCP, TCP6, UDP, UDP6 };
 
   typedef struct {
     char pid[12];
@@ -32,7 +52,7 @@ int main(int argc, char *argv[]) {
 
   typedef struct {
     char *ip;
-    char *port;
+    int port;
   } address;
 
   typedef struct {
@@ -69,17 +89,15 @@ int main(int argc, char *argv[]) {
     while (token != NULL) {
       /*printf("%s\n", token);*/
       if (j == 1) {
-        a->local.ip = (char *)malloc(strlen(token) + 1);
-        strcpy(a->local.ip, token);
+        a->local.ip = (char *)malloc(16);
+        address_converter(token, a->local.ip);
       } else if (j == 2) {
-        a->local.port = (char *)malloc(strlen(token) + 1);
-        strcpy(a->local.port, token);
+        a->local.port = (int)strtol(token, NULL, 16);
       } else if (j == 3) {
-        a->remote.ip = (char *)malloc(strlen(token) + 1);
-        strcpy(a->remote.ip, token);
+        a->remote.ip = (char *)malloc(16);
+        address_converter(token, a->remote.ip);
       } else if (j == 4) {
-        a->remote.port = (char *)malloc(strlen(token) + 1);
-        strcpy(a->remote.port, token);
+        a->remote.port = (int)strtol(token, NULL, 16);
       } else if (j == 13) {
         a->inode = (char *)malloc(strlen(token) + 1);
         strcpy(a->inode, token);
@@ -96,7 +114,7 @@ int main(int argc, char *argv[]) {
 
   int z;
   for (z = 0; z < number_of_connections; z++) {
-    printf("n: %d\nlocal:%s %s\nremote:%s %s\ninode:%s\n\n", z,
+    printf("n: %d\nlocal:%s %d\nremote:%s %d\ninode:%s\n\n", z,
            connections[z]->local.ip, connections[z]->local.port,
            connections[z]->remote.ip, connections[z]->remote.port,
            connections[z]->inode);
@@ -113,18 +131,15 @@ int main(int argc, char *argv[]) {
 
     strcpy(concat_path, "/proc/");
     strcat(concat_path, d->d_name);
-    /*printf("full path: %s\n", concat_path);*/
     struct stat st;
     if (stat(concat_path, &st) != 0) {
       continue;
     }
     if (S_ISDIR(st.st_mode) && isdigit(d->d_name[0])) {
-      /*printf("%s \n", concat_path);*/
 
       char concat_path2[100];
       strcpy(concat_path2, concat_path);
       strcat(concat_path2, "/fd/");
-      /*printf("%s \n", concat_path2);*/
 
       DIR *dir_process = opendir(concat_path2);
       if (!dir_process)
@@ -136,37 +151,20 @@ int main(int argc, char *argv[]) {
         if (stat(concat_path2, &st2) != 0) {
           continue;
         }
-        /*printf("%s %c\n", d2->d_name,d2->d_type);*/
         if (S_ISDIR(st2.st_mode) && isdigit(d2->d_name[0])) {
-
-          /*printf("%s \n", d2->d_name);*/
-          /*printf("%s \n", concat_path);*/
 
           char concat_path3[100];
           strcpy(concat_path3, concat_path2);
           strcat(concat_path3, d2->d_name);
-          /*printf("%s \n", concat_path3);*/
 
           char buf[100];
           ssize_t size;
           size = readlink(concat_path3, buf, 100);
           buf[size] = '\0';
-          /*int z;*/
-          /*printf("### ");*/
-          /*for (z = 0; z < size; z++) {*/
-          /*printf("%c", buf[z]);*/
-          /*}*/
-          /*printf("\n");*/
 
           if (strstr(buf, "socket\0") == NULL) {
-            /*printf("NOT A SOCKET\n"); */
             continue;
           }
-
-          /*printf("%s\n", pos);*/
-          /*if (pos == NULL) {*/
-          /*continue;*/
-          /*}*/
 
           int x;
           for (x = 0; x < number_of_connections; x++) {
@@ -188,10 +186,6 @@ int main(int argc, char *argv[]) {
             strcat(result, connections[x]->inode); // append second
             strcat(result, part3);                 // append third
 
-            /*printf("%c", result[strlen(result)]);*/
-
-            /*printf("%s - %s | %lu - %lu \n", buf, result, strlen(buf),
-             * strlen(result));*/
             if (strcmp(result, buf) == 0) {
               printf("PROCESS: %s \tINODE: %s \n", d->d_name,
                      connections[x]->inode);
@@ -211,4 +205,5 @@ int main(int argc, char *argv[]) {
 }
 
 // todo
-// the list of tcp connection should contain only entry different from listening status ?
+// the list of tcp connection should contain only entry different from listening
+// status ? convert address to host notation from little-endian
