@@ -15,7 +15,7 @@
 #include <unistd.h>
 
 /*
- * The following function convert:
+ * The following function convert ip address:
  * from little endian hex form -> 3600007F
  * to standard text presentation -> 127.0.0.54
  */
@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
 
   typedef struct {
     char pid[12];
-    char comm[20];
+    char comm[25];
   } process;
 
   typedef struct {
@@ -111,14 +111,6 @@ int main(int argc, char *argv[]) {
   }
 
   fclose(fd);
-
-  int z;
-  for (z = 0; z < number_of_connections; z++) {
-    printf("n: %d\nlocal:%s %d\nremote:%s %d\ninode:%s\n\n", z,
-           connections[z]->local.ip, connections[z]->local.port,
-           connections[z]->remote.ip, connections[z]->remote.port,
-           connections[z]->inode);
-  }
 
   // find inodes between process fds
   DIR *dir_main = opendir("/proc/");
@@ -187,8 +179,28 @@ int main(int argc, char *argv[]) {
             strcat(result, part3);                 // append third
 
             if (strcmp(result, buf) == 0) {
-              printf("PROCESS: %s \tINODE: %s \n", d->d_name,
-                     connections[x]->inode);
+              process *p = (process *)malloc(sizeof(process));
+              strcpy(p->pid, d->d_name);
+              connections[x]->proc = p;
+
+              char comm_filepath[60];
+              strcpy(comm_filepath, "/proc/");
+              strcat(comm_filepath, d->d_name);
+              strcat(comm_filepath, "/comm");
+              FILE *cfd = fopen(comm_filepath, "r");
+              if (cfd != NULL) {
+                fgets(connections[x]->proc->comm, 25, cfd);
+                connections[x]
+                    ->proc->comm[strlen(connections[x]->proc->comm) - 1] = '\0';
+
+              } else {
+                strcpy(connections[x]->proc->comm, "xxx\0");
+              }
+
+              fclose(cfd);
+
+              /*printf("PROCESS: %s \tINODE: %s \tCOMMAND: %s \n", d->d_name,*/
+                     /*connections[x]->inode, connections[x]->proc->comm);*/
               free(result);
               break;
             }
@@ -202,6 +214,18 @@ int main(int argc, char *argv[]) {
     }
   }
   closedir(dir_main);
+
+  printf("n\tlocal\tport\tremote\tport\tinode\tpid\tcommand\n");
+  int z;
+  for (z = 0; z < number_of_connections; z++) {
+    printf("%d\t%s\t%d\t%s\t%d\t%u\t%s", z, connections[z]->local.ip,
+           connections[z]->local.port, connections[z]->remote.ip,
+           connections[z]->remote.port,connections[z]->type, connections[z]->inode);
+    if (connections[z]->proc != NULL) {
+      printf("\t%s\t%s", connections[z]->proc->pid, connections[z]->proc->comm);
+    }
+    printf("\n");
+  }
 }
 
 // todo
