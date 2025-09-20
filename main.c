@@ -1,3 +1,4 @@
+#include <asm-generic/int-ll64.h>
 #define _DEFAULT_SOURCE
 
 #include <arpa/inet.h>
@@ -81,7 +82,7 @@ typedef enum {
  * to standard text presentation -> 127.0.0.54
  */
 void address_converter(char *lehf, char *stp) {
-  // this si working for ipv4 addresses
+  // this is working for ipv4 addresses
   int i;
   char buf[3];
   for (i = 6; i >= 0; i = i - 2) {
@@ -103,6 +104,7 @@ int main(int argc, char *argv[]) {
   char proc_net_tcp_line[200];
   FILE *fd;
   int i = 0;
+  struct timespec time_sample;
 
   enum connection_type { TCP, TCP6, UDP, UDP6 };
 
@@ -117,12 +119,20 @@ int main(int argc, char *argv[]) {
   } address;
 
   typedef struct {
+    __u64 byte_sent;
+    __u64 byte_received;
+    struct timespec time;
+  } trasmission;
+
+  typedef struct {
     char *inode;
     enum connection_type type;
     address local;
     address remote;
     tcp_status status;
     process *proc;
+    trasmission first_sample;
+    trasmission second_sample;
   } connection;
 
   connection *connections[300]; // array of 300 pointers to conncection
@@ -294,16 +304,16 @@ int main(int argc, char *argv[]) {
 
   // retrieveing information about specific sockets from the kernel
   /*for (z = 0; z < number_of_connections; z++) {*/
-    /*if (connections[z]->proc != NULL) {*/
-      /*if (strcmp(connections[z]->proc->comm, "spotify") == 0) {*/
-        /*printf("%d\n", z);*/
-        /*break;*/
-      /*}*/
-    /*}*/
+  /*if (connections[z]->proc != NULL) {*/
+  /*if (strcmp(connections[z]->proc->comm, "spotify") == 0) {*/
+  /*printf("%d\n", z);*/
+  /*break;*/
+  /*}*/
+  /*}*/
   /*}*/
   /*if (z == number_of_connections) {*/
-    /*puts("process not exists");*/
-    /*exit(0);*/
+  /*puts("process not exists");*/
+  /*exit(0);*/
   /*}*/
   /*z = 31;*/
 
@@ -313,7 +323,8 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   }
 
-  while (1) {
+  int j = 0;
+  while (j++ < 2) {
     struct sockaddr_nl nladdr = {.nl_family = AF_NETLINK};
 
     // Build netlink header + request
@@ -361,6 +372,7 @@ int main(int argc, char *argv[]) {
       if (len <= 0)
         break;
 
+      clock_gettime(CLOCK_REALTIME, &time_sample);
       for (nlh = (struct nlmsghdr *)buf; NLMSG_OK(nlh, len);
            nlh = NLMSG_NEXT(nlh, len)) {
         if (nlh->nlmsg_type == NLMSG_DONE) {
@@ -373,9 +385,9 @@ int main(int argc, char *argv[]) {
           break;
         }
         struct inet_diag_msg *diag = (struct inet_diag_msg *)NLMSG_DATA(nlh);
-        printf("Socket: src port %u, dst port %u, state %u, inode: %d\n",
-               ntohs(diag->id.idiag_sport), ntohs(diag->id.idiag_dport),
-               diag->idiag_state, diag->idiag_inode);
+        /*printf("Socket: src port %u, dst port %u, state %u, inode: %d\n",*/
+        /*ntohs(diag->id.idiag_sport), ntohs(diag->id.idiag_dport),*/
+        /*diag->idiag_state, diag->idiag_inode);*/
         /*printf("%d\n", diag->id.idiag_if);*/
         /*printf("%d\n", diag->idiag_family);*/
         /*printf("%d\n", diag->idiag_uid);*/
@@ -399,14 +411,37 @@ int main(int argc, char *argv[]) {
              */
             struct tcp_info *tcpi = (struct tcp_info *)RTA_DATA(attr);
 
-            printf("  RTT: %u usec, retrans: %u, cwnd: %u\n", tcpi->tcpi_rtt,
-                   tcpi->tcpi_total_retrans, tcpi->tcpi_snd_cwnd);
+            /*printf("  RTT: %u usec, retrans: %u, cwnd: %u\n",
+             * tcpi->tcpi_rtt,*/
+            /*tcpi->tcpi_total_retrans, tcpi->tcpi_snd_cwnd);*/
 
+            // Check if extended fields exist ?!
             if (len >= offsetof(struct tcp_info, tcpi_bytes_acked) +
                            sizeof(tcpi->tcpi_bytes_acked)) {
-              printf("  Bytes acked: %llu, Bytes received: %llu\n",
-                     (unsigned long long)tcpi->tcpi_bytes_acked,
-                     (unsigned long long)tcpi->tcpi_bytes_received);
+              /*printf("  Bytes acked: %llu, Bytes received: %llu\n",*/
+              /*(unsigned long long)tcpi->tcpi_bytes_acked,*/
+              /*(unsigned long long)tcpi->tcpi_bytes_received);*/
+
+              for (z = 0; z < number_of_connections; z++) {
+                if (atoi(connections[z]->inode) == diag->idiag_inode) {
+                  /*printf("##########PIPPO con j:%d\n",j);*/
+                  if (j == 1) {
+                    memcpy(&(connections[z]->first_sample.time), &time_sample,
+                           sizeof time_sample);
+                    connections[z]->first_sample.byte_sent =
+                        tcpi->tcpi_bytes_sent;
+                    connections[z]->first_sample.byte_received =
+                        tcpi->tcpi_bytes_received;
+                  } else if (j == 2) {
+                    memcpy(&(connections[z]->second_sample.time), &time_sample,
+                           sizeof time_sample);
+                    connections[z]->second_sample.byte_sent =
+                        tcpi->tcpi_bytes_sent;
+                    connections[z]->second_sample.byte_received =
+                        tcpi->tcpi_bytes_received;
+                  }
+                }
+              }
             }
           }
         }
@@ -425,9 +460,34 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  int seconds = connections[0]->second_sample.time.tv_sec -
+                connections[0]->first_sample.time.tv_sec;
+  printf("second: %d\n", seconds);
+
+  printf("n\tlocal\tport\tremote\tport\ts_type\tinode\tstatus\tpid\tcommand\n");
+  for (z = 0; z < number_of_connections; z++) {
+    printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d", z, connections[z]->local.ip,
+           connections[z]->local.port, connections[z]->remote.ip,
+           connections[z]->remote.port, connections[z]->type,
+           connections[z]->inode, connections[z]->status);
+    if (connections[z]->proc != NULL) {
+      printf("\t%s\t%s\t", connections[z]->proc->pid,
+             connections[z]->proc->comm);
+    }
+
+    printf("%llu B/sec\t", (connections[z]->second_sample.byte_received -
+                            connections[z]->first_sample.byte_received) /
+                               seconds);
+    printf("%llu B/sec\t", (connections[z]->second_sample.byte_sent -
+                            connections[z]->first_sample.byte_sent) /
+                               seconds);
+    printf("\n");
+  }
+
   close(sfd);
 }
 
 // todo
 // the list of tcp connection should contain only entry different from listening
-// status ? convert address to host notation from little-endian
+// improve precision of transfer rate not considering only seconds between two
+// sample collect data also for ipv6 sockets
