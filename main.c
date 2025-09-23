@@ -137,7 +137,14 @@ int main(int argc, char *argv[]) {
     trasmission second_sample;
   } connection;
 
+  struct summary {
+    char comm[25];
+    __u64 byte_sent_rate;
+    __u64 byte_received_rate;
+  };
+
   connection *connections[300]; // array of 300 pointers to conncection
+  /*struct summary *summary[50];*/
   int number_of_connections = 0;
 
   /*printf("\033[2J");*/
@@ -147,54 +154,76 @@ int main(int argc, char *argv[]) {
 
   while (1) {
     number_of_connections = 0;
-    fd = fopen("/proc/net/tcp", "r");
 
-    i = 0;
-    while (fgets(proc_net_tcp_line, 200, fd)) {
-      if (i == 0) {
-        i++;
-        continue;
+    int t;
+    for (t = TCP; t <= TCP6; t++) {
+      if (t == TCP) {
+        fd = fopen("/proc/net/tcp", "r");
+      } else {
+        fd = fopen("/proc/net/tcp6", "r");
       }
 
-      char *token;
-      int j = 0;
-      connection *a = (connection *)malloc(sizeof(connection));
-      if (!a) {
-        perror("malloc error");
-        exit(EXIT_FAILURE);
-      }
-      a->proc = NULL;
-      a->type = TCP;
-
-      token = strtok(proc_net_tcp_line, " :"); // split on space and colon
-
-      while (token != NULL) {
-        /*printf("%s\n", token);*/
-        if (j == 1) {
-          a->local.ip = (char *)malloc(16);
-          address_converter(token, a->local.ip);
-        } else if (j == 2) {
-          a->local.port = (int)strtol(token, NULL, 16);
-        } else if (j == 3) {
-          a->remote.ip = (char *)malloc(16);
-          address_converter(token, a->remote.ip);
-        } else if (j == 4) {
-          a->remote.port = (int)strtol(token, NULL, 16);
-        } else if (j == 5) {
-          a->status = (int)strtol(token, NULL, 16);
-        } else if (j == 13) {
-          a->inode = (char *)malloc(strlen(token) + 1);
-          strcpy(a->inode, token);
+      i = 0;
+      while (fgets(proc_net_tcp_line, 200, fd)) {
+        if (i == 0) {
+          i++;
+          continue;
         }
-        token = strtok(NULL, " :"); // continue splitting
-        j++;
+
+        char *token;
+        int j = 0;
+        connection *a = (connection *)malloc(sizeof(connection));
+        if (!a) {
+          perror("malloc error");
+          exit(EXIT_FAILURE);
+        }
+        a->proc = NULL;
+        a->type = TCP;
+        a->first_sample.byte_received = 0;
+        a->first_sample.byte_sent = 0;
+        a->second_sample.byte_received = 0;
+        a->second_sample.byte_sent = 0;
+
+        token = strtok(proc_net_tcp_line, " :"); // split on space and colon
+
+        while (token != NULL) {
+          /*printf("%s\n", token);*/
+          if (j == 1) {
+            if (t == TCP) {
+              a->local.ip = (char *)malloc(16);
+              address_converter(token, a->local.ip);
+            } else {
+              a->local.ip = (char *)malloc(33);
+              strcpy(a->local.ip, token);
+            }
+          } else if (j == 2) {
+            a->local.port = (int)strtol(token, NULL, 16);
+          } else if (j == 3) {
+            if (t == TCP) {
+              a->remote.ip = (char *)malloc(16);
+              address_converter(token, a->remote.ip);
+            } else {
+              a->remote.ip = (char *)malloc(33);
+              strcpy(a->remote.ip, token);
+            }
+          } else if (j == 4) {
+            a->remote.port = (int)strtol(token, NULL, 16);
+          } else if (j == 5) {
+            a->status = (int)strtol(token, NULL, 16);
+          } else if (j == 13) {
+            a->inode = (char *)malloc(strlen(token) + 1);
+            strcpy(a->inode, token);
+          }
+          token = strtok(NULL, " :"); // continue splitting
+          j++;
+        }
+
+        // add connection struct to connections array
+        connections[number_of_connections++] = a;
       }
 
-      // add connection struct to connections array
-      connections[number_of_connections++] = a;
+      fclose(fd);
     }
-
-    fclose(fd);
 
     // find inodes between process fds
     DIR *dir_main = opendir("/proc/");
@@ -319,6 +348,7 @@ int main(int argc, char *argv[]) {
     /*}*/
     /*printf("\n");*/
     /*}*/
+    /*exit(0);*/
 
     // retrieveing information about specific sockets from the kernel
     /*for (z = 0; z < number_of_connections; z++) {*/
@@ -341,122 +371,133 @@ int main(int argc, char *argv[]) {
       return EXIT_FAILURE;
     }
 
-    int j = 0;
-    while (j++ < 2) {
-      struct sockaddr_nl nladdr = {.nl_family = AF_NETLINK};
+    int number_of_sample;
+    for (number_of_sample = 1; number_of_sample <= 2; number_of_sample++) {
+      for (t = TCP; t <= TCP6; t++) {
+        struct sockaddr_nl nladdr = {.nl_family = AF_NETLINK};
 
-      // Build netlink header + request
-      // see https://man7.org/linux/man-pages/man7/netlink.7.html
-      char buf[8192];
-      struct nlmsghdr *nlh = (struct nlmsghdr *)buf;
-      nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct inet_diag_req_v2));
-      nlh->nlmsg_type = SOCK_DIAG_BY_FAMILY;
-      nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
-      nlh->nlmsg_seq = 12345;
-      nlh->nlmsg_pid = 0;
+        // Build netlink header + request
+        // see https://man7.org/linux/man-pages/man7/netlink.7.html
+        char buf[8192];
+        struct nlmsghdr *nlh = (struct nlmsghdr *)buf;
+        nlh->nlmsg_len = NLMSG_LENGTH(sizeof(struct inet_diag_req_v2));
+        nlh->nlmsg_type = SOCK_DIAG_BY_FAMILY;
+        nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+        nlh->nlmsg_seq = 12345;
+        nlh->nlmsg_pid = 0;
 
-      // see https://man7.org/linux/man-pages/man7/sock_diag.7.html
-      /*
-      struct inet_diag_sockid id;
-      id.idiag_sport = connections[z]->local.port;
-      inet_pton(AF_INET, connections[z]->local.ip, id.idiag_src);
-      id.idiag_dport = connections[z]->remote.port;
-      inet_pton(AF_INET, connections[z]->local.ip, id.idiag_dst);
-      id.idiag_if = 0;
-      */
+        // see https://man7.org/linux/man-pages/man7/sock_diag.7.html
+        /*
+        struct inet_diag_sockid id;
+        id.idiag_sport = connections[z]->local.port;
+        inet_pton(AF_INET, connections[z]->local.ip, id.idiag_src);
+        id.idiag_dport = connections[z]->remote.port;
+        inet_pton(AF_INET, connections[z]->local.ip, id.idiag_dst);
+        id.idiag_if = 0;
+        */
 
-      /*struct inet_diag_req_v2 req;*/
-      struct inet_diag_req_v2 *req = (struct inet_diag_req_v2 *)NLMSG_DATA(nlh);
-      memset(req, 0, sizeof(*req));
-      req->sdiag_family = AF_INET;
-      req->sdiag_protocol = IPPROTO_TCP;
-      req->idiag_ext = (1 << (INET_DIAG_INFO - 1));
-      req->pad = 0;
-      req->idiag_states = TCPF_ALL; // filter sockets by status
-      /*req->id = id;*/
+        /*struct inet_diag_req_v2 req;*/
+        struct inet_diag_req_v2 *req =
+            (struct inet_diag_req_v2 *)NLMSG_DATA(nlh);
+        memset(req, 0, sizeof(*req));
+        if (t == TCP) {
+          req->sdiag_family = AF_INET;
+        } else {
+          req->sdiag_family = AF_INET6;
+        }
+        req->sdiag_protocol = IPPROTO_TCP;
+        req->idiag_ext = (1 << (INET_DIAG_INFO - 1));
+        req->pad = 0;
+        req->idiag_states = TCPF_ALL; // filter sockets by status
+        /*req->id = id;*/
 
-      struct iovec iov = {nlh, nlh->nlmsg_len};
-      struct msghdr msg = {&nladdr, sizeof(nladdr), &iov, 1, NULL, 0, 0};
+        struct iovec iov = {nlh, nlh->nlmsg_len};
+        struct msghdr msg = {&nladdr, sizeof(nladdr), &iov, 1, NULL, 0, 0};
 
-      if (sendmsg(sfd, &msg, 0) < 0) {
-        perror("sendmsg");
-        return 1;
-      }
+        if (sendmsg(sfd, &msg, 0) < 0) {
+          perror("sendmsg");
+          return 1;
+        }
 
-      // Read responses
-      int goon = 1;
-      while (goon) {
-        int len = recv(sfd, buf, sizeof(buf), 0);
-        if (len <= 0)
-          break;
-
-        clock_gettime(CLOCK_REALTIME, &time_sample);
-        for (nlh = (struct nlmsghdr *)buf; NLMSG_OK(nlh, len);
-             nlh = NLMSG_NEXT(nlh, len)) {
-          if (nlh->nlmsg_type == NLMSG_DONE) {
-            goon = 0;
+        // Read responses
+        int goon = 1;
+        while (goon) {
+          int len = recv(sfd, buf, sizeof(buf), 0);
+          if (len <= 0)
             break;
-          }
-          if (nlh->nlmsg_type == NLMSG_ERROR) {
-            fprintf(stderr, "netlink error\n");
-            goon = 0;
-            break;
-          }
-          struct inet_diag_msg *diag = (struct inet_diag_msg *)NLMSG_DATA(nlh);
-          /*printf("Socket: src port %u, dst port %u, state %u, inode: %d\n",*/
-          /*ntohs(diag->id.idiag_sport), ntohs(diag->id.idiag_dport),*/
-          /*diag->idiag_state, diag->idiag_inode);*/
-          /*printf("%d\n", diag->id.idiag_if);*/
-          /*printf("%d\n", diag->idiag_family);*/
-          /*printf("%d\n", diag->idiag_uid);*/
-          /*printf("%d\n",diag->tcp_info->tcpi_bytes_acked);*/
 
-          int rtalen = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*diag));
-          // see https://man7.org/linux/man-pages/man7/rtnetlink.7.html
-          struct rtattr *attr = (struct rtattr *)(diag + 1);
+          clock_gettime(CLOCK_REALTIME, &time_sample);
+          for (nlh = (struct nlmsghdr *)buf; NLMSG_OK(nlh, len);
+               nlh = NLMSG_NEXT(nlh, len)) {
+            if (nlh->nlmsg_type == NLMSG_DONE) {
+              goon = 0;
+              break;
+            }
+            if (nlh->nlmsg_type == NLMSG_ERROR) {
+              fprintf(stderr, "netlink error\n");
+              goon = 0;
+              break;
+            }
+            struct inet_diag_msg *diag =
+                (struct inet_diag_msg *)NLMSG_DATA(nlh);
+            /*printf("Socket: src port %u, dst port %u, state %u, inode:
+             * %d\n",*/
+            /*ntohs(diag->id.idiag_sport), ntohs(diag->id.idiag_dport),*/
+            /*diag->idiag_state, diag->idiag_inode);*/
+            /*printf("%d\n", diag->id.idiag_if);*/
+            /*printf("%d\n", diag->idiag_family);*/
+            /*printf("%d\n", diag->idiag_uid);*/
+            /*printf("%d\n",diag->tcp_info->tcpi_bytes_acked);*/
 
-          // Walk attributes
-          for (; RTA_OK(attr, rtalen); attr = RTA_NEXT(attr, rtalen)) {
-            if (attr->rta_type == INET_DIAG_INFO) {
+            int rtalen = nlh->nlmsg_len - NLMSG_LENGTH(sizeof(*diag));
+            // see https://man7.org/linux/man-pages/man7/rtnetlink.7.html
+            struct rtattr *attr = (struct rtattr *)(diag + 1);
 
-              /*
-               * Relevant fields on tcpi structure
-               * tcpi_bytes_acked: total bytes ACKed (delivered).
-               * tcpi_bytes_received: total bytes received.
-               * tcpi_bytes_sent: total bytes sent, including retransmissions.
-               * tcpi_bytes_retrans: total retransmitted bytes.
-               * tcpi_delivery_rate: estimated delivery rate in bytes/sec.
-               */
-              struct tcp_info *tcpi = (struct tcp_info *)RTA_DATA(attr);
+            // Walk attributes
+            for (; RTA_OK(attr, rtalen); attr = RTA_NEXT(attr, rtalen)) {
+              if (attr->rta_type == INET_DIAG_INFO) {
 
-              /*printf("  RTT: %u usec, retrans: %u, cwnd: %u\n",
-               * tcpi->tcpi_rtt,*/
-              /*tcpi->tcpi_total_retrans, tcpi->tcpi_snd_cwnd);*/
+                /*
+                 * Relevant fields on tcpi structure
+                 * tcpi_bytes_acked: total bytes ACKed (delivered).
+                 * tcpi_bytes_received: total bytes received.
+                 * tcpi_bytes_sent: total bytes sent, including retransmissions.
+                 * tcpi_bytes_retrans: total retransmitted bytes.
+                 * tcpi_delivery_rate: estimated delivery rate in bytes/sec.
+                 *
+                 * reference https://www.rfc-editor.org/rfc/rfc4898.html
+                 */
+                struct tcp_info *tcpi = (struct tcp_info *)RTA_DATA(attr);
 
-              // Check if extended fields exist ?!
-              if (len >= offsetof(struct tcp_info, tcpi_bytes_acked) +
-                             sizeof(tcpi->tcpi_bytes_acked)) {
-                /*printf("  Bytes acked: %llu, Bytes received: %llu\n",*/
-                /*(unsigned long long)tcpi->tcpi_bytes_acked,*/
-                /*(unsigned long long)tcpi->tcpi_bytes_received);*/
+                /*printf("  RTT: %u usec, retrans: %u, cwnd: %u\n",
+                 * tcpi->tcpi_rtt,*/
+                /*tcpi->tcpi_total_retrans, tcpi->tcpi_snd_cwnd);*/
 
-                for (z = 0; z < number_of_connections; z++) {
-                  if (atoi(connections[z]->inode) == diag->idiag_inode) {
-                    /*printf("##########PIPPO con j:%d\n",j);*/
-                    if (j == 1) {
-                      memcpy(&(connections[z]->first_sample.time), &time_sample,
-                             sizeof time_sample);
-                      connections[z]->first_sample.byte_sent =
-                          tcpi->tcpi_bytes_sent;
-                      connections[z]->first_sample.byte_received =
-                          tcpi->tcpi_bytes_received;
-                    } else if (j == 2) {
-                      memcpy(&(connections[z]->second_sample.time),
-                             &time_sample, sizeof time_sample);
-                      connections[z]->second_sample.byte_sent =
-                          tcpi->tcpi_bytes_sent;
-                      connections[z]->second_sample.byte_received =
-                          tcpi->tcpi_bytes_received;
+                // Check if extended fields exist ?!
+                if (len >= offsetof(struct tcp_info, tcpi_bytes_acked) +
+                               sizeof(tcpi->tcpi_bytes_acked)) {
+                  /*printf("  Bytes acked: %llu, Bytes received: %llu\n",*/
+                  /*(unsigned long long)tcpi->tcpi_bytes_acked,*/
+                  /*(unsigned long long)tcpi->tcpi_bytes_received);*/
+
+                  for (z = 0; z < number_of_connections; z++) {
+                    if (atoi(connections[z]->inode) == diag->idiag_inode) {
+                      /*printf("##########PIPPO con j:%d\n",j);*/
+                      if (number_of_sample == 1) {
+                        memcpy(&(connections[z]->first_sample.time),
+                               &time_sample, sizeof time_sample);
+                        connections[z]->first_sample.byte_sent =
+                            tcpi->tcpi_bytes_sent;
+                        connections[z]->first_sample.byte_received =
+                            tcpi->tcpi_bytes_received;
+                      } else if (number_of_sample == 2) {
+                        memcpy(&(connections[z]->second_sample.time),
+                               &time_sample, sizeof time_sample);
+                        connections[z]->second_sample.byte_sent =
+                            tcpi->tcpi_bytes_sent;
+                        connections[z]->second_sample.byte_received =
+                            tcpi->tcpi_bytes_received;
+                      }
                     }
                   }
                 }
@@ -472,6 +513,9 @@ int main(int argc, char *argv[]) {
       time.tv_nsec = 0;
 
       puts("\n\n");
+      if (number_of_sample == 2) {
+        continue;
+      }
       if (nanosleep(&time, &rem) == -1) {
         perror("sleep time not respected");
         break;
@@ -480,27 +524,36 @@ int main(int argc, char *argv[]) {
 
     int seconds = connections[0]->second_sample.time.tv_sec -
                   connections[0]->first_sample.time.tv_sec;
-    printf("second: %d\n", seconds);
+    /*printf("second: %d\n", seconds);*/
 
-    printf(
-        "n\tlocal\tport\tremote\tport\ts_type\tinode\tstatus\tpid\tcommand\n");
+    /*printf("n\tlocal\tport\tremote\tport\ts_"*/
+    /*"type\tinode\tstatus\tpid\tcommand\n");*/
     for (z = 0; z < number_of_connections; z++) {
-      printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d", z, connections[z]->local.ip,
-             connections[z]->local.port, connections[z]->remote.ip,
-             connections[z]->remote.port, connections[z]->type,
-             connections[z]->inode, connections[z]->status);
-      if (connections[z]->proc != NULL) {
-        printf("\t%s\t%s\t", connections[z]->proc->pid,
-               connections[z]->proc->comm);
-      }
+      /*printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d", z, connections[z]->local.ip,*/
+      /*connections[z]->local.port, connections[z]->remote.ip,*/
+      /*connections[z]->remote.port, connections[z]->type,*/
+      /*connections[z]->inode, connections[z]->status);*/
+      int rate = (int)((connections[z]->second_sample.byte_received -
+                        connections[z]->first_sample.byte_received) /
+                       seconds);
 
-      printf("%llu B/sec\t", (connections[z]->second_sample.byte_received -
-                              connections[z]->first_sample.byte_received) /
-                                 seconds);
-      printf("%llu B/sec\t", (connections[z]->second_sample.byte_sent -
-                              connections[z]->first_sample.byte_sent) /
-                                 seconds);
-      printf("\n");
+      if (rate > 0) {
+
+          if (connections[z]->proc != NULL) {
+            /*printf("\t%s", connections[z]->proc->pid);*/
+            printf("%s\t", connections[z]->proc->comm);
+          }
+
+        /*printf("%s \t", connections[z]->inode);*/
+        /*printf("%llu\t", (connections[z]->second_sample.byte_received));*/
+        /*printf("%llu\t", (connections[z]->first_sample.byte_received));*/
+        printf("%d B/sec\t", rate);
+        /*printf("%llu B/sec\t", (connections[z]->second_sample.byte_sent -*/
+        /*connections[z]->first_sample.byte_sent) /*/
+        /*seconds);*/
+        printf("%d", seconds);
+        printf("\n");
+      }
     }
 
     close(sfd);
@@ -525,7 +578,8 @@ int main(int argc, char *argv[]) {
   }
 }
 
-// todo
+// Some points to improve
 // the list of tcp connection should contain only entry different from listening
-// improve precision of transfer rate not considering only seconds between two
-// sample collect data also for ipv6 sockets
+// status properly translate tcp6 addresses from little-endian format improve
+// code performance what about udp connections ?! run with sudo to get info for
+// all sockets and not just ones from current user
