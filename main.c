@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
   };
 
   connection *connections[300]; // array of 300 pointers to conncection
-  /*struct summary *summary[50];*/
+  struct summary *summary[50];
   int number_of_connections = 0;
 
   /*printf("\033[2J");*/
@@ -512,7 +512,7 @@ int main(int argc, char *argv[]) {
       time.tv_sec = 2;
       time.tv_nsec = 0;
 
-      puts("\n\n");
+      /*puts("\n\n");*/
       if (number_of_sample == 2) {
         continue;
       }
@@ -528,31 +528,67 @@ int main(int argc, char *argv[]) {
 
     /*printf("n\tlocal\tport\tremote\tport\ts_"*/
     /*"type\tinode\tstatus\tpid\tcommand\n");*/
+    int summary_elements = 0;
     for (z = 0; z < number_of_connections; z++) {
       /*printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d", z, connections[z]->local.ip,*/
       /*connections[z]->local.port, connections[z]->remote.ip,*/
       /*connections[z]->remote.port, connections[z]->type,*/
       /*connections[z]->inode, connections[z]->status);*/
-      int rate = (int)((connections[z]->second_sample.byte_received -
-                        connections[z]->first_sample.byte_received) /
-                       seconds);
 
-      if (rate > 0) {
+      if (connections[z]->second_sample.byte_received <
+              connections[z]->first_sample.byte_received ||
+          connections[z]->second_sample.byte_sent <
+              connections[z]->first_sample.byte_sent) {
+        continue;
+      }
 
-          if (connections[z]->proc != NULL) {
-            /*printf("\t%s", connections[z]->proc->pid);*/
-            printf("%s\t", connections[z]->proc->comm);
+      int rate_received = (int)((connections[z]->second_sample.byte_received -
+                                 connections[z]->first_sample.byte_received) /
+                                seconds);
+      int rate_sent = (int)((connections[z]->second_sample.byte_sent -
+                             connections[z]->first_sample.byte_sent) /
+                            seconds);
+
+      if (rate_received > 0 || rate_sent > 0) {
+
+        if (connections[z]->proc != NULL) {
+
+          /*printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d\t%s\n", z,*/
+                 /*connections[z]->local.ip, connections[z]->local.port,*/
+                 /*connections[z]->remote.ip, connections[z]->remote.port,*/
+                 /*connections[z]->type, connections[z]->inode,*/
+                 /*connections[z]->status, connections[z]->proc->comm);*/
+          short is_present = 0;
+          for (i = 0; i < summary_elements; i++) {
+            if (strcmp(summary[i]->comm, connections[z]->proc->comm) == 0) {
+              summary[i]->byte_received_rate += rate_received;
+              summary[i]->byte_sent_rate += rate_sent;
+              is_present = 1;
+              break;
+            }
           }
+          if (is_present == 0) {
+            struct summary *s = malloc(sizeof(struct summary));
+            if (!s) {
+              perror("malloc error");
+              exit(EXIT_FAILURE);
+            }
+            s->comm[0] = '\0';
+            s->byte_received_rate = rate_received;
+            s->byte_sent_rate = rate_sent;
+            strcpy(s->comm, connections[z]->proc->comm);
+            summary[summary_elements++] = s;
+          }
+        }
+      }
+    }
 
-        /*printf("%s \t", connections[z]->inode);*/
-        /*printf("%llu\t", (connections[z]->second_sample.byte_received));*/
-        /*printf("%llu\t", (connections[z]->first_sample.byte_received));*/
-        printf("%d B/sec\t", rate);
-        /*printf("%llu B/sec\t", (connections[z]->second_sample.byte_sent -*/
-        /*connections[z]->first_sample.byte_sent) /*/
-        /*seconds);*/
-        printf("%d", seconds);
-        printf("\n");
+    printf("process_command\trate(Byte/sec)\tdownload\tupload\n");
+    for (i = 0; i < summary_elements; i++) {
+      if (summary[i] != NULL) {
+        printf("%s\t\t", summary[i]->comm);
+        printf("%llu\t", summary[i]->byte_received_rate);
+        printf("%llu\t\n", summary[i]->byte_sent_rate);
       }
     }
 
@@ -575,6 +611,11 @@ int main(int argc, char *argv[]) {
         free(connections[z]);
       }
     }
+    for (i = 0; i < summary_elements; i++) {
+      if (summary[i] != NULL) {
+        free(summary[i]);
+      }
+    }
   }
 }
 
@@ -583,3 +624,4 @@ int main(int argc, char *argv[]) {
 // status properly translate tcp6 addresses from little-endian format improve
 // code performance what about udp connections ?! run with sudo to get info for
 // all sockets and not just ones from current user
+// make time interval between sample configurable
