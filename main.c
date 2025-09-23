@@ -147,10 +147,10 @@ int main(int argc, char *argv[]) {
   struct summary *summary[50];
   int number_of_connections = 0;
 
-  /*printf("\033[2J");*/
-  /*printf("\033[0H");*/
-  /*printf("\033[1;31m"); //set colors*/
-  /*printf("NetDesk");*/
+  printf("\033[2J");
+  printf("\033[0H");
+  printf("\033[1;93m"); // set colors
+  printf("NetDesk\n");
 
   while (1) {
     number_of_connections = 0;
@@ -554,10 +554,10 @@ int main(int argc, char *argv[]) {
         if (connections[z]->proc != NULL) {
 
           /*printf("%d\t%s\t%d\t%s\t%d\t%u\t%s\t%d\t%s\n", z,*/
-                 /*connections[z]->local.ip, connections[z]->local.port,*/
-                 /*connections[z]->remote.ip, connections[z]->remote.port,*/
-                 /*connections[z]->type, connections[z]->inode,*/
-                 /*connections[z]->status, connections[z]->proc->comm);*/
+          /*connections[z]->local.ip, connections[z]->local.port,*/
+          /*connections[z]->remote.ip, connections[z]->remote.port,*/
+          /*connections[z]->type, connections[z]->inode,*/
+          /*connections[z]->status, connections[z]->proc->comm);*/
           short is_present = 0;
           for (i = 0; i < summary_elements; i++) {
             if (strcmp(summary[i]->comm, connections[z]->proc->comm) == 0) {
@@ -582,17 +582,20 @@ int main(int argc, char *argv[]) {
         }
       }
     }
+    close(sfd);
 
-    printf("process_command\trate(Byte/sec)\tdownload\tupload\n");
+    printf("\033[2J");
+    printf("\033[0H");
+    printf("\033[1;93m"); // set colors
+    printf("NetDesk\n");
+    printf("process_command\tdownload\tupload\t(Byte/sec)\n");
     for (i = 0; i < summary_elements; i++) {
       if (summary[i] != NULL) {
         printf("%s\t\t", summary[i]->comm);
-        printf("%llu\t", summary[i]->byte_received_rate);
+        printf("%llu\t\t", summary[i]->byte_received_rate);
         printf("%llu\t\n", summary[i]->byte_sent_rate);
       }
     }
-
-    close(sfd);
 
     for (z = 0; z < number_of_connections; z++) {
       if (connections[z]->proc != NULL) {
