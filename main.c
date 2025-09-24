@@ -535,7 +535,7 @@ int main(int argc, char *argv[]) {
       }
       if (nanosleep(&time, &rem) == -1) {
         perror("sleep time not respected");
-        exit(EXIT_FAILURE);
+        exit(0);
       }
     }
 
