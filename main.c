@@ -1,4 +1,3 @@
-#include <asm-generic/int-ll64.h>
 #define _DEFAULT_SOURCE
 
 #include <arpa/inet.h>
@@ -6,6 +5,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -100,6 +101,13 @@ void address_converter(char *lehf, char *stp) {
   }
   strcat(stp, "\0");
 }
+struct termios default_term;
+
+void restore_terminal() {
+  printf("\033[?1049l");
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &default_term);
+  puts("Interruption signal received");
+}
 
 int main(int argc, char *argv[]) {
   setbuf(stdout, NULL); // disable buffer on stdout
@@ -144,9 +152,18 @@ int main(int argc, char *argv[]) {
   };
 
   connection *connections[300]; // array of 300 pointers to conncection
-  struct summary *summary[50];
+  struct summary *summary[20];
   int number_of_connections = 0;
 
+  struct termios netdesk_term;
+  tcgetattr(STDIN_FILENO, &default_term);
+  signal(SIGINT, restore_terminal); // Ensure restore on Ctrl+C
+
+  netdesk_term = default_term;
+  netdesk_term.c_lflag &= ~(ICANON | ECHO); // disable canonical mode & echo
+  tcsetattr(STDIN_FILENO, TCSANOW, &netdesk_term);
+
+  printf("\033[?1049h");
   printf("\033[2J");
   printf("\033[0H");
   printf("\033[1;93m"); // set colors
@@ -518,7 +535,7 @@ int main(int argc, char *argv[]) {
       }
       if (nanosleep(&time, &rem) == -1) {
         perror("sleep time not respected");
-        break;
+        exit(EXIT_FAILURE);
       }
     }
 
@@ -628,3 +645,4 @@ int main(int argc, char *argv[]) {
 // code performance what about udp connections ?! run with sudo to get info for
 // all sockets and not just ones from current user
 // make time interval between sample configurable
+// list open socket with correspective remote connection
